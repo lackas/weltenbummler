@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block body_class %}app{% endblock %}
+{% block body %}
+<header>
+  <h1>Weltenbummler</h1>
+  <div class="projection" role="group" aria-label="Kartenprojektion">
+    <button type="button" data-projection="equalEarth">Equal Earth</button>
+    <button type="button" data-projection="un">UN-Emblem</button>
+    <button type="button" data-projection="mercator">Mercator</button>
+  </div>
+  <nav class="account">
+    <span>{{ g.user['name'] }}</span>
+    {% if g.user['is_admin'] %}<a href="{{ url_for('admin') }}">Verwaltung</a>{% endif %}
+    <a href="{{ url_for('password') }}">Passwort</a>
+    <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="link">Abmelden</button></form>
+  </nav>
+</header>
+{% include "_flash.html" %}
+<div class="layout">
+  <aside>
+    <ul id="people"></ul>
+    <h2 id="list-title"></h2>
+    <ul id="visits"></ul>
+  </aside>
+  <main>
+    <svg id="map" role="img" aria-label="Weltkarte"></svg>
+    <section id="detail" hidden>
+      <button type="button" class="close" aria-label="Schließen">&times;</button>
+      <h2 id="detail-name"></h2>
+      <label class="toggle" id="detail-toggle"><input type="checkbox" id="detail-visited"> <span id="detail-who"></span></label>
+      <textarea id="detail-note" rows="3" maxlength="2000" placeholder="Wann, mit wem, Link zur Reise …"></textarea>
+      <p id="detail-text"></p>
+      <button type="button" class="link" id="detail-edit">Notiz bearbeiten</button>
+      <p id="detail-status" aria-live="polite"></p>
+    </section>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='vendor/d3.v7.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/topojson-client.v3.min.js') }}"></script>
+<script src="{{ url_for('static', filename='map.js') }}"></script>
+{% endblock %}

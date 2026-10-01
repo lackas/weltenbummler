@@ -1,0 +1,387 @@
+"use strict";
+
+/* Countries smaller than this (steradians, about 4000 km²) also get a dot, so
+   Singapore or Malta can be clicked without zooming in. Measured on the globe,
+   not on screen, so a phone does not turn half the world into dots. */
+const DOT_BELOW_AREA = 1e-4;
+const DOT_RADIUS = 3;
+const SAVE_DELAY_MS = 600;
+const PROJECTION_KEY = "weltenbummler.projection";
+
+/* Each projection comes with the outline it is fitted to and filled with. */
+const PROJECTIONS = {
+  /* Equal-area, so Africa is as large as it really is. */
+  equalEarth: () => ({ projection: d3.geoEqualEarth(), frame: { type: "Sphere" } }),
+  /* The UN emblem: azimuthal equidistant around the North Pole, cut off
+     before Antarctica would wrap around the rim. */
+  un: () => ({
+    projection: d3.geoAzimuthalEquidistant().rotate([0, -90]).clipAngle(150),
+    frame: { type: "Sphere" },
+  }),
+  /* Mercator runs to infinity at the poles, so it is cut at 58°S / 84°N. */
+  mercator: () => ({
+    projection: d3.geoMercator(),
+    frame: d3.geoGraticule().extentMajor([[-180, -58], [180, 84]]).outline(),
+    clip: true,
+  }),
+};
+
+function stored(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode: the choice just does not survive a reload */
+  }
+}
+
+const state = {
+  me: null,
+  users: [],
+  person: null, // the user whose map is shown
+  country: null, // the country in the detail panel
+  editing: false, // the note is open in the textarea rather than shown as text
+  projection: PROJECTIONS[stored(PROJECTION_KEY)] ? stored(PROJECTION_KEY) : "equalEarth",
+  countries: [],
+  byId: new Map(),
+};
+
+const svg = d3.select("#map");
+const zoomLayer = svg.append("g");
+const $ = (id) => document.getElementById(id);
+
+const person = () => state.users.find((u) => u.id === state.person);
+const canEdit = () => state.me.admin || state.person === state.me.id;
+const countryName = (id) => state.byId.get(id)?.properties.name ?? id;
+
+/* The flag emoji is spelled with the two regional-indicator letters of the
+   ISO code. Natural Earth has no code (-99) for a few disputed areas. */
+function flag(id) {
+  const iso = state.byId.get(id)?.properties.iso ?? "";
+  if (!/^[A-Z]{2}$/.test(iso)) return "";
+  return String.fromCodePoint(...[...iso].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+/* Notes are plain text; anything that looks like a web address becomes a link.
+   Built from text nodes, never innerHTML, so a note cannot inject markup. */
+function renderNote(element, note) {
+  element.replaceChildren();
+  for (const part of note.split(/(https?:\/\/[^\s<>"]+[^\s<>".,;:!?)\]])/)) {
+    if (/^https?:\/\//.test(part)) {
+      const a = document.createElement("a");
+      a.href = part;
+      a.textContent = part.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      a.target = "_blank";
+      a.rel = "noopener";
+      element.append(a);
+    } else if (part) {
+      element.append(document.createTextNode(part));
+    }
+  }
+}
+
+async function api(method, url, body) {
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", "X-Requested-With": "weltenbummler" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (response.status === 401) {
+    window.location.href = "/login";
+    throw new Error("logged out");
+  }
+  if (!response.ok) throw new Error(`${method} ${url}: ${response.status}`);
+  return response.status === 204 ? null : response.json();
+}
+
+/* ---------- people and their lists ---------- */
+
+function renderPeople() {
+  const list = $("people");
+  list.replaceChildren(
+    ...state.users.map((u) => {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.user = u.id;
+      button.append(u.name);
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = Object.keys(u.visits).length;
+      button.append(count);
+      if (u.id === state.person) button.setAttribute("aria-current", "true");
+      button.addEventListener("click", () => selectPerson(u.id));
+      li.append(button);
+      return li;
+    }),
+  );
+}
+
+function renderVisits() {
+  const p = person();
+  const ids = Object.keys(p.visits).sort((a, b) => countryName(a).localeCompare(countryName(b), "de"));
+  $("list-title").textContent = `${p.name}: ${ids.length} ${ids.length === 1 ? "Land" : "Länder"}`;
+  $("visits").replaceChildren(
+    ...ids.map((id) => {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "link country-name";
+      const icon = document.createElement("span");
+      icon.className = "flag";
+      icon.textContent = flag(id);
+      icon.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.textContent = countryName(id);
+      button.append(icon, label);
+      button.addEventListener("click", () => openCountry(id));
+      li.append(button);
+      if (p.visits[id]) {
+        const note = document.createElement("p");
+        renderNote(note, p.visits[id]);
+        li.append(note);
+      }
+      return li;
+    }),
+  );
+}
+
+function paintMap() {
+  const visits = person().visits;
+  zoomLayer
+    .selectAll(".country, .dot")
+    .classed("visited", (d) => d.id in visits)
+    .classed("selected", (d) => d.id === state.country);
+}
+
+function render() {
+  renderPeople();
+  renderVisits();
+  paintMap();
+  renderDetail();
+}
+
+function selectPerson(id) {
+  flushNote();
+  state.person = id;
+  state.editing = false;
+  render();
+}
+
+/* ---------- detail panel ---------- */
+
+let saveTimer = null;
+
+function renderDetail() {
+  const panel = $("detail");
+  const id = state.country;
+  panel.hidden = id === null;
+  if (id === null) return;
+  const p = person();
+  const visited = id in p.visits;
+  const editable = canEdit();
+  const saved = p.visits[id] ?? "";
+  const editing = editable && visited && state.editing;
+  $("detail-name").textContent = `${flag(id)} ${countryName(id)}`.trim();
+  $("detail-toggle").hidden = !editable;
+  $("detail-visited").checked = visited;
+  $("detail-who").textContent = p.id === state.me.id ? "Hier war ich" : `Hier war ${p.name}`;
+  const note = $("detail-note");
+  note.hidden = !editing;
+  if (document.activeElement !== note) note.value = saved;
+  const text = $("detail-text");
+  text.hidden = editing || (editable && !saved);
+  if (!visited) text.textContent = `${p.name} war noch nicht hier.`;
+  else if (saved) renderNote(text, saved);
+  else text.textContent = `${p.name} war hier.`;
+  const edit = $("detail-edit");
+  edit.hidden = !editable || !visited || editing;
+  edit.textContent = saved ? "Notiz bearbeiten" : "Notiz hinzufügen";
+  $("detail-status").textContent = "";
+}
+
+function status(message) {
+  $("detail-status").textContent = message;
+}
+
+async function openCountry(id) {
+  flushNote();
+  state.country = id;
+  state.editing = false;
+  const p = person();
+  /* the first click on a grey country marks it, so the common case stays one click */
+  if (canEdit() && !(id in p.visits)) {
+    state.editing = true;
+    await setVisited(id, true);
+    $("detail-note").focus();
+  } else {
+    render();
+  }
+}
+
+function closeDetail() {
+  flushNote();
+  state.country = null;
+  render();
+}
+
+async function setVisited(id, visited) {
+  const p = person();
+  try {
+    if (visited) {
+      await api("PUT", `/api/users/${p.id}/visits/${id}`, { note: p.visits[id] ?? "" });
+      p.visits[id] = p.visits[id] ?? "";
+    } else {
+      await api("DELETE", `/api/users/${p.id}/visits/${id}`);
+      delete p.visits[id];
+    }
+    render();
+  } catch (e) {
+    render();
+    status("Speichern ging nicht, bitte nochmal.");
+    console.error(e);
+  }
+}
+
+async function saveNote(userId, id, note) {
+  const p = state.users.find((u) => u.id === userId);
+  try {
+    await api("PUT", `/api/users/${userId}/visits/${id}`, { note });
+    p.visits[id] = note;
+    renderVisits();
+    if (state.person === userId && state.country === id) status("Gespeichert");
+  } catch (e) {
+    status("Speichern ging nicht, bitte nochmal.");
+    console.error(e);
+  }
+}
+
+/* Saving belongs to the user and country it was typed for, even if the
+   panel has moved on by the time the timer fires. */
+let pending = null;
+
+function scheduleNote() {
+  pending = { userId: state.person, id: state.country, note: $("detail-note").value };
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushNote, SAVE_DELAY_MS);
+}
+
+function flushNote() {
+  clearTimeout(saveTimer);
+  if (pending === null) return;
+  const { userId, id, note } = pending;
+  pending = null;
+  saveNote(userId, id, note);
+}
+
+$("detail-note").addEventListener("input", scheduleNote);
+$("detail-note").addEventListener("blur", flushNote);
+$("detail-edit").addEventListener("click", () => {
+  state.editing = true;
+  renderDetail();
+  $("detail-note").focus();
+});
+$("detail-visited").addEventListener("change", (event) => {
+  const id = state.country;
+  const note = person().visits[id];
+  if (!event.target.checked && note && !confirm(`${countryName(id)} entfernen? Die Notiz geht dabei verloren.`)) {
+    event.target.checked = true;
+    return;
+  }
+  pending = null;
+  clearTimeout(saveTimer);
+  setVisited(id, event.target.checked);
+});
+document.querySelector("#detail .close").addEventListener("click", closeDetail);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.country !== null) closeDetail();
+});
+window.addEventListener("beforeunload", flushNote);
+
+/* ---------- map ---------- */
+
+function draw() {
+  const { width, height } = svg.node().getBoundingClientRect();
+  if (!width || !height) return;
+  const { projection, frame, clip } = PROJECTIONS[state.projection]();
+  projection.fitExtent([[8, 8], [width - 8, height - 8]], frame);
+  const path = d3.geoPath(projection);
+  if (clip) projection.clipExtent(path.bounds(frame));
+
+  zoomLayer.selectAll("*").remove();
+  zoomLayer.append("path").attr("class", "sphere").attr("d", path(frame));
+  zoomLayer.append("path").attr("class", "graticule").attr("d", path(d3.geoGraticule10()));
+
+  const shapes = zoomLayer
+    .append("g")
+    .selectAll("path")
+    .data(state.countries)
+    .join("path")
+    .attr("class", "country")
+    .attr("d", path);
+
+  const small = state.countries.filter((d) => d3.geoArea(d) < DOT_BELOW_AREA && path.centroid(d).every(Number.isFinite));
+  const dots = zoomLayer
+    .append("g")
+    .selectAll("circle")
+    .data(small)
+    .join("circle")
+    .attr("class", "dot")
+    .attr("r", DOT_RADIUS)
+    .attr("cx", (d) => path.centroid(d)[0])
+    .attr("cy", (d) => path.centroid(d)[1]);
+
+  for (const sel of [shapes, dots]) {
+    sel
+      .on("click", (_, d) => openCountry(d.id))
+      .append("title")
+      .text((d) => d.properties.name);
+  }
+
+  const zoom = d3
+    .zoom()
+    .scaleExtent([1, 12])
+    .translateExtent([[0, 0], [width, height]])
+    .on("zoom", (event) => {
+      zoomLayer.attr("transform", event.transform);
+      /* keep the dots the same size on screen */
+      dots.attr("r", DOT_RADIUS / event.transform.k);
+    });
+  svg.call(zoom).call(zoom.transform, d3.zoomIdentity);
+  paintMap();
+}
+
+function setProjection(name) {
+  state.projection = name;
+  store(PROJECTION_KEY, name);
+  document.querySelectorAll("[data-projection]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.projection === name));
+  });
+  draw();
+}
+
+/* ---------- start ---------- */
+
+Promise.all([fetch("/static/countries.json").then((r) => r.json()), api("GET", "/api/data")]).then(
+  ([topology, data]) => {
+    state.countries = topojson.feature(topology, Object.values(topology.objects)[0]).features;
+    state.byId = new Map(state.countries.map((c) => [c.id, c]));
+    state.me = data.me;
+    state.users = data.users;
+    state.person = data.me.id;
+    document.querySelectorAll("[data-projection]").forEach((b) => {
+      b.addEventListener("click", () => setProjection(b.dataset.projection));
+    });
+    setProjection(state.projection);
+    new ResizeObserver(draw).observe(svg.node());
+    render();
+    window.weltenbummler = { state };
+  },
+);

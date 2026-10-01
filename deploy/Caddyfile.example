@@ -1,0 +1,11 @@
+# Template for the Caddy site block. Caddy terminates TLS and adds the
+# transport headers; the app sets CSP, nosniff and Referrer-Policy itself.
+weltenbummler.example.net {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8070
+}

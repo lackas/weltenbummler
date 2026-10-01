@@ -1,0 +1,10 @@
+services:
+  weltenbummler:
+    build: .
+    restart: unless-stopped
+    # SQLite, secret key and nothing else live here
+    volumes:
+      - ./instance:/data
+    # Caddy runs on the same host and is the only way in
+    ports:
+      - "127.0.0.1:8070:8000"

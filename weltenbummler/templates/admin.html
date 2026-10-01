@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Verwaltung · Weltenbummler{% endblock %}
+{% block body %}
+<main class="card wide">
+  <p><a href="{{ url_for('index') }}">&larr; Zur Karte</a></p>
+  <h1>Verwaltung</h1>
+  {% include "_flash.html" %}
+  <ul class="users">
+    {% for u in users %}
+    <li>
+      <span>{{ u['name'] }}{% if u['is_admin'] %} <small>Admin</small>{% endif %}</span>
+      <form method="post" action="{{ url_for('admin_reset', user_id=u['id']) }}">
+        <button type="submit" class="secondary">Neues Passwort</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="{{ url_for('admin_create') }}" class="inline">
+    <label>Neuer Benutzer <input name="name" placeholder="Vorname" required></label>
+    <button type="submit">Anlegen</button>
+  </form>
+  <p class="hint">Das Passwort wird nur einmal angezeigt. Länder trägst du direkt auf der Karte ein, als Admin darfst du jede Karte bearbeiten.</p>
+</main>
+{% endblock %}

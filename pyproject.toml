@@ -1,0 +1,23 @@
+[project]
+name = "weltenbummler"
+version = "0.1.0"
+description = "Family map of the countries each of us has visited"
+requires-python = ">=3.11"
+dependencies = ["flask>=3.1", "argon2-cffi>=23"]
+
+[project.optional-dependencies]
+serve = ["gunicorn"]
+test = ["pytest", "playwright"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["weltenbummler"]
+
+[tool.setuptools.package-data]
+weltenbummler = ["templates/*.html", "static/*", "static/vendor/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
