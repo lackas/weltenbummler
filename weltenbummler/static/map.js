@@ -105,8 +105,12 @@ async function api(method, url, body) {
 
 function renderPeople() {
   const list = $("people");
+  /* most countries first: a little competition is half the fun */
+  const ranked = [...state.users].sort(
+    (a, b) => Object.keys(b.visits).length - Object.keys(a.visits).length || a.name.localeCompare(b.name, "de"),
+  );
   list.replaceChildren(
-    ...state.users.map((u) => {
+    ...ranked.map((u) => {
       const li = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";

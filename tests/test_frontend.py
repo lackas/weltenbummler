@@ -121,3 +121,10 @@ def test_the_country_list_shows_flags(page, live_server):
     country(page, "Schweden").click()
     expect(page.locator("#visits .country-name")).to_have_text("🇸🇪Schweden")
     expect(page.locator("#detail-name")).to_have_text("🇸🇪 Schweden")
+
+
+def test_people_are_ranked_by_how_many_countries_they_have(page, live_server):
+    login(page, live_server, "Clara", "clara-pass")
+    expect(page.locator("#people button")).to_have_text(["Anna0", "Ben0", "Clara0"])
+    country(page, "Schweden").click()
+    expect(page.locator("#people button")).to_have_text(["Clara1", "Anna0", "Ben0"])
