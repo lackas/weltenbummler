@@ -125,6 +125,38 @@ def test_the_country_list_shows_flags(page, live_server):
 
 def test_people_are_ranked_by_how_many_countries_they_have(page, live_server):
     login(page, live_server, "Clara", "clara-pass")
-    expect(page.locator("#people button")).to_have_text(["Anna0", "Ben0", "Clara0"])
+    expect(page.locator("#people button")).to_have_text(["Alle0", "Anna0", "Ben0", "Clara0"])
     country(page, "Schweden").click()
-    expect(page.locator("#people button")).to_have_text(["Clara1", "Anna0", "Ben0"])
+    expect(page.locator("#people button")).to_have_text(["Alle1", "Clara1", "Anna0", "Ben0"])
+
+
+def test_the_family_view_colours_by_how_many_were_there(page, live_server):
+    login(page, live_server, "Anna", "admin-pass")
+    for name in ["Anna", "Ben", "Clara"]:
+        page.click(f"#people button:has-text('{name}')")
+        country(page, "Schweden").click()
+    page.click("#people button:has-text('Ben')")
+    country(page, "Finnland").click()
+    page.fill("#detail-note", "Helsinki https://example.org/")
+    expect(page.locator("#detail-status")).to_have_text("Gespeichert")
+
+    page.click("#people button:has-text('Alle')")
+    expect(page.locator("#people button[aria-current=true]")).to_have_text("Alle2")
+    expect(country(page, "Schweden")).to_have_class("country heat-3")
+    expect(country(page, "Finnland")).to_have_class("country selected heat-1")
+    expect(page.locator("#legend span")).to_have_text(["1", "2", "alle"])
+    expect(page.locator("#visits .country-name")).to_have_text(["🇸🇪Schweden", "🇫🇮Finnland"])
+    expect(page.locator("#visits p")).to_have_text(["alle", "Ben"])
+
+    # read-only, even for the admin, and shows everyone with their note
+    country(page, "Finnland").click()
+    expect(page.locator("#detail-visited")).to_be_hidden()
+    expect(page.locator("#detail-note")).to_be_hidden()
+    expect(page.locator("#detail-text .visitor")).to_have_text(["BenHelsinki example.org"])
+    country(page, "Polen").click()
+    expect(page.locator("#detail-text")).to_have_text("Hier war noch niemand.")
+    expect(country(page, "Polen")).to_have_class("country selected")
+
+    page.click("#people button:has-text('Ben')")
+    expect(page.locator("#legend")).to_be_hidden()
+    expect(country(page, "Finnland")).to_have_class("country visited")

@@ -7,6 +7,9 @@ const DOT_BELOW_AREA = 1e-4;
 const DOT_RADIUS = 3;
 const SAVE_DELAY_MS = 600;
 const PROJECTION_KEY = "weltenbummler.projection";
+/* "person" value of the family view, which colours a country by how many have been there */
+const ALL = "all";
+const HEAT_LEVELS = 5;
 
 /* Each projection comes with the outline it is fitted to and filled with. */
 const PROJECTIONS = {
@@ -58,7 +61,10 @@ const zoomLayer = svg.append("g");
 const $ = (id) => document.getElementById(id);
 
 const person = () => state.users.find((u) => u.id === state.person);
-const canEdit = () => state.me.admin || state.person === state.me.id;
+const isAll = () => state.person === ALL;
+const canEdit = () => !isAll() && (state.me.admin || state.person === state.me.id);
+const visitorsOf = (id) => state.users.filter((u) => id in u.visits);
+const everyCountry = () => new Set(state.users.flatMap((u) => Object.keys(u.visits)));
 const countryName = (id) => state.byId.get(id)?.properties.name ?? id;
 
 /* The flag emoji is spelled with the two regional-indicator letters of the
@@ -109,29 +115,37 @@ function renderPeople() {
   const ranked = [...state.users].sort(
     (a, b) => Object.keys(b.visits).length - Object.keys(a.visits).length || a.name.localeCompare(b.name, "de"),
   );
+  const entry = (id, name, n) => {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.user = id;
+    button.append(name);
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = n;
+    button.append(count);
+    if (id === state.person) button.setAttribute("aria-current", "true");
+    button.addEventListener("click", () => selectPerson(id));
+    li.append(button);
+    return li;
+  };
   list.replaceChildren(
-    ...ranked.map((u) => {
-      const li = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.user = u.id;
-      button.append(u.name);
-      const count = document.createElement("span");
-      count.className = "count";
-      count.textContent = Object.keys(u.visits).length;
-      button.append(count);
-      if (u.id === state.person) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => selectPerson(u.id));
-      li.append(button);
-      return li;
-    }),
+    entry(ALL, "Alle", everyCountry().size),
+    ...ranked.map((u) => entry(u.id, u.name, Object.keys(u.visits).length)),
   );
 }
 
 function renderVisits() {
-  const p = person();
-  const ids = Object.keys(p.visits).sort((a, b) => countryName(a).localeCompare(countryName(b), "de"));
-  $("list-title").textContent = `${p.name}: ${ids.length} ${ids.length === 1 ? "Land" : "Länder"}`;
+  const all = isAll();
+  const p = all ? null : person();
+  const byName = (a, b) => countryName(a).localeCompare(countryName(b), "de");
+  /* the family list puts the countries most of us have seen first */
+  const ids = all
+    ? [...everyCountry()].sort((a, b) => visitorsOf(b).length - visitorsOf(a).length || byName(a, b))
+    : Object.keys(p.visits).sort(byName);
+  const owner = all ? "Alle" : p.name;
+  $("list-title").textContent = `${owner}: ${ids.length} ${ids.length === 1 ? "Land" : "Länder"}`;
   $("visits").replaceChildren(
     ...ids.map((id) => {
       const li = document.createElement("li");
@@ -147,7 +161,12 @@ function renderVisits() {
       button.append(icon, label);
       button.addEventListener("click", () => openCountry(id));
       li.append(button);
-      if (p.visits[id]) {
+      if (all) {
+        const who = document.createElement("p");
+        const visitors = visitorsOf(id);
+        who.textContent = visitors.length === state.users.length ? "alle" : visitors.map((u) => u.name).join(", ");
+        li.append(who);
+      } else if (p.visits[id]) {
         const note = document.createElement("p");
         renderNote(note, p.visits[id]);
         li.append(note);
@@ -157,12 +176,39 @@ function renderVisits() {
   );
 }
 
+function heat(id) {
+  return Math.min(visitorsOf(id).length, HEAT_LEVELS);
+}
+
 function paintMap() {
-  const visits = person().visits;
-  zoomLayer
+  const all = isAll();
+  const visits = all ? {} : person().visits;
+  const shapes = zoomLayer
     .selectAll(".country, .dot")
     .classed("visited", (d) => d.id in visits)
     .classed("selected", (d) => d.id === state.country);
+  for (let level = 1; level <= HEAT_LEVELS; level++) {
+    shapes.classed(`heat-${level}`, (d) => all && heat(d.id) === level);
+  }
+  renderLegend();
+}
+
+function renderLegend() {
+  const legend = $("legend");
+  legend.hidden = !isAll();
+  if (legend.hidden) return;
+  const levels = Math.min(state.users.length, HEAT_LEVELS);
+  legend.replaceChildren(
+    ...Array.from({ length: levels }, (_, i) => {
+      const item = document.createElement("span");
+      const swatch = document.createElement("i");
+      swatch.className = `heat-${i + 1}`;
+      const n = i + 1;
+      const label = n === state.users.length ? "alle" : n === levels && n < state.users.length ? `${n}+` : `${n}`;
+      item.append(swatch, label);
+      return item;
+    }),
+  );
 }
 
 function render() {
@@ -188,6 +234,11 @@ function renderDetail() {
   const id = state.country;
   panel.hidden = id === null;
   if (id === null) return;
+  $("detail-name").textContent = `${flag(id)} ${countryName(id)}`.trim();
+  if (isAll()) {
+    renderFamilyDetail(id);
+    return;
+  }
   const p = person();
   const visited = id in p.visits;
   const editable = canEdit();
@@ -208,6 +259,33 @@ function renderDetail() {
   const edit = $("detail-edit");
   edit.hidden = !editable || !visited || editing;
   edit.textContent = saved ? "Notiz bearbeiten" : "Notiz hinzufügen";
+  $("detail-status").textContent = "";
+}
+
+function renderFamilyDetail(id) {
+  for (const hidden of ["detail-toggle", "detail-note", "detail-edit"]) $(hidden).hidden = true;
+  const text = $("detail-text");
+  text.hidden = false;
+  const visitors = visitorsOf(id);
+  if (visitors.length === 0) {
+    text.textContent = "Hier war noch niemand.";
+  } else {
+    text.replaceChildren(
+      ...visitors.map((u) => {
+        const line = document.createElement("span");
+        line.className = "visitor";
+        const name = document.createElement("strong");
+        name.textContent = u.name;
+        line.append(name);
+        if (u.visits[id]) {
+          const note = document.createElement("span");
+          renderNote(note, u.visits[id]);
+          line.append(note);
+        }
+        return line;
+      }),
+    );
+  }
   $("detail-status").textContent = "";
 }
 
