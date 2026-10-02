@@ -402,18 +402,23 @@ window.addEventListener("beforeunload", flushNote);
 function draw() {
   const { width, height } = svg.node().getBoundingClientRect();
   if (!width || !height) return;
-  const { projection, frame, clip } = PROJECTIONS[state.projection]();
+  const us = state.region === "us";
+  /* The USA view is the traditional map: Albers equal-area with Alaska and
+     Hawaii moved in below, only the states, no world around them. */
+  const { projection, frame, clip } = us
+    ? { projection: d3.geoAlbersUsa(), frame: { type: "FeatureCollection", features: state.states } }
+    : PROJECTIONS[state.projection]();
   projection.fitExtent([[8, 8], [width - 8, height - 8]], frame);
   const path = d3.geoPath(projection);
   if (clip) projection.clipExtent(path.bounds(frame));
 
   zoomLayer.selectAll("*").remove();
-  zoomLayer.append("path").attr("class", "sphere").attr("d", path(frame));
-  zoomLayer.append("path").attr("class", "graticule").attr("d", path(d3.geoGraticule10()));
+  if (!us) {
+    zoomLayer.append("path").attr("class", "sphere").attr("d", path(frame));
+    zoomLayer.append("path").attr("class", "graticule").attr("d", path(d3.geoGraticule10()));
+  }
 
-  /* in the USA view the country gives way to its states */
-  const features =
-    state.region === "us" ? [...state.countries.filter((c) => c.id !== "USA"), ...state.states] : state.countries;
+  const features = us ? state.states : state.countries;
   const shapes = zoomLayer
     .append("g")
     .selectAll("path")
@@ -449,26 +454,14 @@ function draw() {
       /* keep the dots the same size on screen */
       dots.attr("r", DOT_RADIUS / event.transform.k);
     });
-  svg.call(zoom).call(zoom.transform, state.region === "us" ? usView(path, width, height) : d3.zoomIdentity);
+  svg.call(zoom).call(zoom.transform, d3.zoomIdentity);
   paintMap();
 }
 
-/* Zoom onto the lower 48 and mainland Alaska. Alaska's whole outline would not
-   do: the Aleutians cross the date line and stretch the box around the world. */
-function usView(path, width, height) {
-  const lower48 = state.states.filter((s) => s.id !== "US-AK" && s.id !== "US-HI");
-  /* points around mainland Alaska; several, since most projections bend the meridians */
-  const alaska = [[-168, 54], [-168, 60], [-168, 66], [-160, 72], [-141, 71], [-130, 54]];
-  const corners = [...lower48.flatMap((s) => path.bounds(s)), ...alaska.map(path.projection())].filter(
-    (p) => p && p.every(Number.isFinite),
-  );
-  const [x0, x1] = d3.extent(corners, (p) => p[0]);
-  const [y0, y1] = d3.extent(corners, (p) => p[1]);
-  const k = Math.min(12, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height));
-  return d3.zoomIdentity
-    .translate(width / 2, height / 2)
-    .scale(k)
-    .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+function showRegion() {
+  $("region").setAttribute("aria-pressed", String(state.region === "us"));
+  /* the USA map has its own projection */
+  document.querySelector(".projection").hidden = state.region === "us";
 }
 
 function setRegion(region) {
@@ -477,7 +470,7 @@ function setRegion(region) {
   state.country = null;
   state.editing = false;
   store(REGION_KEY, region);
-  $("region").setAttribute("aria-pressed", String(region === "us"));
+  showRegion();
   draw();
   render();
 }
@@ -505,7 +498,7 @@ Promise.all([fetch("/static/countries.json").then((r) => r.json()), api("GET", "
       b.addEventListener("click", () => setProjection(b.dataset.projection));
     });
     $("region").addEventListener("click", () => setRegion(state.region === "us" ? "world" : "us"));
-    $("region").setAttribute("aria-pressed", String(state.region === "us"));
+    showRegion();
     setProjection(state.projection);
     new ResizeObserver(draw).observe(svg.node());
     render();

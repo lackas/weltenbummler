@@ -175,8 +175,15 @@ def test_the_usa_view_splits_the_country_into_states(page, live_server):
     expect(country(page, "Vereinigte Staaten")).to_have_count(0)
     expect(state_shape(page, "Kalifornien")).to_have_count(1)
     expect(page.locator("#list-title")).to_have_text("Ben: 0 Staaten")
-    # zoomed in on the USA
-    assert state_shape(page, "Texas").bounding_box()["width"] > 80
+    # the traditional USA map: only the states, Alaska and Hawaii moved in below
+    expect(country(page, "Kanada")).to_have_count(0)
+    expect(page.locator(".projection")).to_be_hidden()
+    texas = state_shape(page, "Texas").bounding_box()
+    alaska = state_shape(page, "Alaska").bounding_box()
+    hawaii = state_shape(page, "Hawaii").bounding_box()
+    assert texas["width"] > 150
+    assert alaska["y"] > texas["y"] and hawaii["y"] > texas["y"]
+    assert alaska["x"] < texas["x"] and hawaii["x"] < texas["x"] + texas["width"]
 
     # marking a state marks the country as well
     state_shape(page, "Kalifornien").click()
@@ -189,6 +196,7 @@ def test_the_usa_view_splits_the_country_into_states(page, live_server):
     page.wait_for_selector(".country")
     expect(page.locator("#region")).to_have_attribute("aria-pressed", "true")
     page.click("#region")
+    expect(page.locator(".projection")).to_be_visible()
     expect(page.locator("#list-title")).to_have_text("Ben: 1 Land")
     expect(country(page, "Vereinigte Staaten")).to_have_class("country visited")
 
