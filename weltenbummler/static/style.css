@@ -147,7 +147,7 @@ header {
   border-bottom: 1px solid var(--line);
 }
 .projection { display: flex; gap: 4px; }
-.projection button {
+.projection button, .pill {
   font-size: 13px;
   padding: 3px 10px;
   border-radius: 999px;
@@ -155,7 +155,11 @@ header {
   border-color: var(--line);
   color: var(--ink);
 }
-.projection button[aria-pressed="true"] { background: var(--visited); border-color: var(--visited); color: #fff; }
+.projection button[aria-pressed="true"], .pill[aria-pressed="true"] {
+  background: var(--visited);
+  border-color: var(--visited);
+  color: #fff;
+}
 .account { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 14px; }
 .account span { color: var(--muted); }
 .account form { margin: 0; }
@@ -278,5 +282,5 @@ aside {
   #people { display: flex; overflow-x: auto; margin: 0; }
   #people button { gap: 8px; white-space: nowrap; }
   #list-title, #visits { display: none; }
-  .projection { order: 3; }
+  .projection, .pill { order: 3; }
 }

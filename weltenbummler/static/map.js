@@ -7,6 +7,7 @@ const DOT_BELOW_AREA = 1e-4;
 const DOT_RADIUS = 3;
 const SAVE_DELAY_MS = 600;
 const PROJECTION_KEY = "weltenbummler.projection";
+const REGION_KEY = "weltenbummler.region";
 /* "person" value of the family view, which colours a country by how many have been there */
 const ALL = "all";
 const HEAT_LEVELS = 5;
@@ -52,7 +53,10 @@ const state = {
   country: null, // the country in the detail panel
   editing: false, // the note is open in the textarea rather than shown as text
   projection: PROJECTIONS[stored(PROJECTION_KEY)] ? stored(PROJECTION_KEY) : "equalEarth",
+  /* "world" counts countries; "us" splits the USA into its states and counts those */
+  region: stored(REGION_KEY) === "us" ? "us" : "world",
   countries: [],
+  states: [],
   byId: new Map(),
 };
 
@@ -64,7 +68,12 @@ const person = () => state.users.find((u) => u.id === state.person);
 const isAll = () => state.person === ALL;
 const canEdit = () => !isAll() && (state.me.admin || state.person === state.me.id);
 const visitorsOf = (id) => state.users.filter((u) => id in u.visits);
-const everyCountry = () => new Set(state.users.flatMap((u) => Object.keys(u.visits)));
+/* Countries are "DEU", states "US-CA"; each region counts only its own kind. */
+const isState = (id) => id.startsWith("US-");
+const inRegion = (id) => isState(id) === (state.region === "us");
+const regionVisits = (u) => Object.keys(u.visits).filter(inRegion);
+const unit = (n) => (state.region === "us" ? (n === 1 ? "Staat" : "Staaten") : n === 1 ? "Land" : "Länder");
+const everyCountry = () => new Set(state.users.flatMap(regionVisits));
 const countryName = (id) => state.byId.get(id)?.properties.name ?? id;
 
 /* The flag emoji is spelled with the two regional-indicator letters of the
@@ -113,7 +122,7 @@ function renderPeople() {
   const list = $("people");
   /* most countries first: a little competition is half the fun */
   const ranked = [...state.users].sort(
-    (a, b) => Object.keys(b.visits).length - Object.keys(a.visits).length || a.name.localeCompare(b.name, "de"),
+    (a, b) => regionVisits(b).length - regionVisits(a).length || a.name.localeCompare(b.name, "de"),
   );
   const entry = (id, name, n) => {
     const li = document.createElement("li");
@@ -132,7 +141,7 @@ function renderPeople() {
   };
   list.replaceChildren(
     entry(ALL, "Alle", everyCountry().size),
-    ...ranked.map((u) => entry(u.id, u.name, Object.keys(u.visits).length)),
+    ...ranked.map((u) => entry(u.id, u.name, regionVisits(u).length)),
   );
 }
 
@@ -143,9 +152,9 @@ function renderVisits() {
   /* the family list puts the countries most of us have seen first */
   const ids = all
     ? [...everyCountry()].sort((a, b) => visitorsOf(b).length - visitorsOf(a).length || byName(a, b))
-    : Object.keys(p.visits).sort(byName);
+    : regionVisits(p).sort(byName);
   const owner = all ? "Alle" : p.name;
-  $("list-title").textContent = `${owner}: ${ids.length} ${ids.length === 1 ? "Land" : "Länder"}`;
+  $("list-title").textContent = `${owner}: ${ids.length} ${unit(ids.length)}`;
   $("visits").replaceChildren(
     ...ids.map((id) => {
       const li = document.createElement("li");
@@ -244,7 +253,6 @@ function renderDetail() {
   const editable = canEdit();
   const saved = p.visits[id] ?? "";
   const editing = editable && visited && state.editing;
-  $("detail-name").textContent = `${flag(id)} ${countryName(id)}`.trim();
   $("detail-toggle").hidden = !editable;
   $("detail-visited").checked = visited;
   $("detail-who").textContent = p.id === state.me.id ? "Hier war ich" : `Hier war ${p.name}`;
@@ -301,6 +309,8 @@ async function openCountry(id) {
   /* the first click on a grey country marks it, so the common case stays one click */
   if (canEdit() && !(id in p.visits)) {
     state.editing = true;
+    /* a state implies the country, so the world map stays consistent */
+    if (isState(id) && !("USA" in p.visits)) await setVisited("USA", true);
     await setVisited(id, true);
     $("detail-note").focus();
   } else {
@@ -401,15 +411,18 @@ function draw() {
   zoomLayer.append("path").attr("class", "sphere").attr("d", path(frame));
   zoomLayer.append("path").attr("class", "graticule").attr("d", path(d3.geoGraticule10()));
 
+  /* in the USA view the country gives way to its states */
+  const features =
+    state.region === "us" ? [...state.countries.filter((c) => c.id !== "USA"), ...state.states] : state.countries;
   const shapes = zoomLayer
     .append("g")
     .selectAll("path")
-    .data(state.countries)
+    .data(features)
     .join("path")
     .attr("class", "country")
     .attr("d", path);
 
-  const small = state.countries.filter((d) => d3.geoArea(d) < DOT_BELOW_AREA && path.centroid(d).every(Number.isFinite));
+  const small = features.filter((d) => d3.geoArea(d) < DOT_BELOW_AREA && path.centroid(d).every(Number.isFinite));
   const dots = zoomLayer
     .append("g")
     .selectAll("circle")
@@ -436,8 +449,37 @@ function draw() {
       /* keep the dots the same size on screen */
       dots.attr("r", DOT_RADIUS / event.transform.k);
     });
-  svg.call(zoom).call(zoom.transform, d3.zoomIdentity);
+  svg.call(zoom).call(zoom.transform, state.region === "us" ? usView(path, width, height) : d3.zoomIdentity);
   paintMap();
+}
+
+/* Zoom onto the lower 48 and mainland Alaska. Alaska's whole outline would not
+   do: the Aleutians cross the date line and stretch the box around the world. */
+function usView(path, width, height) {
+  const lower48 = state.states.filter((s) => s.id !== "US-AK" && s.id !== "US-HI");
+  /* points around mainland Alaska; several, since most projections bend the meridians */
+  const alaska = [[-168, 54], [-168, 60], [-168, 66], [-160, 72], [-141, 71], [-130, 54]];
+  const corners = [...lower48.flatMap((s) => path.bounds(s)), ...alaska.map(path.projection())].filter(
+    (p) => p && p.every(Number.isFinite),
+  );
+  const [x0, x1] = d3.extent(corners, (p) => p[0]);
+  const [y0, y1] = d3.extent(corners, (p) => p[1]);
+  const k = Math.min(12, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height));
+  return d3.zoomIdentity
+    .translate(width / 2, height / 2)
+    .scale(k)
+    .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+}
+
+function setRegion(region) {
+  flushNote();
+  state.region = region;
+  state.country = null;
+  state.editing = false;
+  store(REGION_KEY, region);
+  $("region").setAttribute("aria-pressed", String(region === "us"));
+  draw();
+  render();
 }
 
 function setProjection(name) {
@@ -453,14 +495,17 @@ function setProjection(name) {
 
 Promise.all([fetch("/static/countries.json").then((r) => r.json()), api("GET", "/api/data")]).then(
   ([topology, data]) => {
-    state.countries = topojson.feature(topology, Object.values(topology.objects)[0]).features;
-    state.byId = new Map(state.countries.map((c) => [c.id, c]));
+    state.countries = topojson.feature(topology, topology.objects.countries).features;
+    state.states = topojson.feature(topology, topology.objects.states).features;
+    state.byId = new Map([...state.countries, ...state.states].map((c) => [c.id, c]));
     state.me = data.me;
     state.users = data.users;
     state.person = data.me.id;
     document.querySelectorAll("[data-projection]").forEach((b) => {
       b.addEventListener("click", () => setProjection(b.dataset.projection));
     });
+    $("region").addEventListener("click", () => setRegion(state.region === "us" ? "world" : "us"));
+    $("region").setAttribute("aria-pressed", String(state.region === "us"));
     setProjection(state.projection);
     new ResizeObserver(draw).observe(svg.node());
     render();

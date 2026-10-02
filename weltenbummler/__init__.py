@@ -37,9 +37,9 @@ def _secret_key(instance_path):
 
 
 def _country_ids(static_folder):
+    """Every id on the map: countries ("DEU") and US states ("US-CA")."""
     topology = json.loads((Path(static_folder) / "countries.json").read_text())
-    (layer,) = topology["objects"].values()
-    return {geometry["id"] for geometry in layer["geometries"]}
+    return {geometry["id"] for layer in topology["objects"].values() for geometry in layer["geometries"]}
 
 
 def create_app(config=None):

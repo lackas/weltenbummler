@@ -8,6 +8,7 @@
     <button type="button" data-projection="un">UN-Emblem</button>
     <button type="button" data-projection="mercator">Mercator</button>
   </div>
+  <button type="button" id="region" class="pill" aria-pressed="false">USA-Staaten</button>
   <nav class="account">
     <span>{{ g.user['name'] }}</span>
     {% if g.user['is_admin'] %}<a href="{{ url_for('admin') }}">Verwaltung</a>{% endif %}

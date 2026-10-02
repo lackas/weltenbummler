@@ -70,3 +70,9 @@ def test_the_page_runs_under_a_strict_csp(client):
     login(client, "Ben", "ben-pass")
     csp = client.get("/").headers["Content-Security-Policy"]
     assert "'unsafe-inline'" not in csp and "script-src 'self'" in csp
+
+
+def test_a_us_state_can_be_stored_like_a_country(client):
+    login(client, "Ben", "ben-pass")
+    assert client.put(f"/api/users/{user_id(client, 'Ben')}/visits/US-CA", json={"note": "2022"}).status_code == 200
+    assert visits(client, "Ben") == {"US-CA": "2022"}

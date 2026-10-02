@@ -160,3 +160,45 @@ def test_the_family_view_colours_by_how_many_were_there(page, live_server):
     page.click("#people button:has-text('Ben')")
     expect(page.locator("#legend")).to_be_hidden()
     expect(country(page, "Finnland")).to_have_class("country visited")
+
+
+def state_shape(page, name):
+    return page.locator(f".country:has(title:text-is('{name}'))")
+
+
+def test_the_usa_view_splits_the_country_into_states(page, live_server):
+    login(page, live_server, "Ben", "ben-pass")
+    expect(page.locator("#region")).to_have_attribute("aria-pressed", "false")
+    expect(state_shape(page, "Kalifornien")).to_have_count(0)
+
+    page.click("#region")
+    expect(country(page, "Vereinigte Staaten")).to_have_count(0)
+    expect(state_shape(page, "Kalifornien")).to_have_count(1)
+    expect(page.locator("#list-title")).to_have_text("Ben: 0 Staaten")
+    # zoomed in on the USA
+    assert state_shape(page, "Texas").bounding_box()["width"] > 80
+
+    # marking a state marks the country as well
+    state_shape(page, "Kalifornien").click()
+    page.fill("#detail-note", "Highway 1")
+    expect(page.locator("#detail-status")).to_have_text("Gespeichert")
+    expect(page.locator("#list-title")).to_have_text("Ben: 1 Staat")
+    expect(page.locator("#people button[aria-current=true]")).to_have_text("Ben1")
+
+    page.reload()
+    page.wait_for_selector(".country")
+    expect(page.locator("#region")).to_have_attribute("aria-pressed", "true")
+    page.click("#region")
+    expect(page.locator("#list-title")).to_have_text("Ben: 1 Land")
+    expect(country(page, "Vereinigte Staaten")).to_have_class("country visited")
+
+
+def test_the_family_view_counts_states_in_the_usa_view(page, live_server):
+    login(page, live_server, "Anna", "admin-pass")
+    page.click("#region")
+    for name in ["Anna", "Ben"]:
+        page.click(f"#people button:has-text('{name}')")
+        state_shape(page, "Texas").click()
+    page.click("#people button:has-text('Alle')")
+    expect(page.locator("#people button[aria-current=true]")).to_have_text("Alle1")
+    expect(state_shape(page, "Texas")).to_have_class("country selected heat-2")
